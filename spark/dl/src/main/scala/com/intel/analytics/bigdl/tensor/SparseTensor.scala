@@ -240,7 +240,8 @@ private[tensor] class SparseTensor[@specialized(Float, Double) T: ClassTag](
   }
 
   override def resize(sizes: Array[Int], strides: Array[Int]): Tensor[T] = {
-    throw new UnsupportedOperationException(s"SparseTensor: Unimplemented method")
+    require(strides == null, "Do not support stride on sparse tensor")
+    resize(sizes, 0)
   }
 
   override def resize(size1: Int): Tensor[T] = {
@@ -354,6 +355,10 @@ private[tensor] class SparseTensor[@specialized(Float, Double) T: ClassTag](
 
   override def copy(other: Tensor[T]): Tensor[T] = {
     throw new UnsupportedOperationException(s"SparseTensor: Unimplemented method")
+  }
+
+  override def batchCopy(others: Array[Tensor[T]]): Tensor[T] = {
+    SparseTensor.concat(1, others, this)
   }
 
   override def apply1(func: (T) => T): Tensor[T] = {
@@ -1008,7 +1013,7 @@ private[tensor] class SparseTensor[@specialized(Float, Double) T: ClassTag](
   }
 
   override def emptyInstance(): Tensor[T] = {
-    throw new UnsupportedOperationException(s"SparseTensor: Unimplemented method")
+    Tensor.sparse(Array(0), 0)
   }
 
   override def cast[D: ClassTag](

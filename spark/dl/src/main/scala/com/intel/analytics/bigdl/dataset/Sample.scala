@@ -19,6 +19,7 @@ package com.intel.analytics.bigdl.dataset
 
 import com.intel.analytics.bigdl.tensor.TensorNumericMath.TensorNumeric
 import com.intel.analytics.bigdl.tensor.{DenseType, SparseType, Storage, Tensor}
+import com.intel.analytics.bigdl.utils.{T, Table}
 import org.apache.commons.lang3.SerializationUtils
 import org.apache.zookeeper.KeeperException.UnimplementedException
 
@@ -343,7 +344,7 @@ object Sample {
     if (featureTensor.getTensorType == DenseType) {
       ArraySample(featureTensor, labelTensor)
     } else {
-      TensorSample(featureTensor, labelTensor)
+      TableSample(featureTensor, labelTensor)
     }
   }
 
@@ -354,7 +355,7 @@ object Sample {
     if (featureTensor.getTensorType == DenseType) {
       ArraySample(featureTensor, label)
     } else {
-      TensorSample(featureTensor, label)
+      TableSample(featureTensor, label)
     }
   }
 
@@ -362,7 +363,7 @@ object Sample {
         featureTensors: Array[Tensor[T]],
         labelTensor: Tensor[T])(implicit ev: TensorNumeric[T]) : Sample[T] = {
     if (featureTensors.exists(_.getTensorType == SparseType)) {
-      TensorSample(featureTensors, labelTensor)
+      TableSample(featureTensors, labelTensor)
     } else {
       ArraySample(featureTensors, labelTensor)
     }
@@ -372,7 +373,7 @@ object Sample {
         featureTensors: Array[Tensor[T]],
         labelTensors: Array[Tensor[T]])(implicit ev: TensorNumeric[T]) : Sample[T] = {
     if (featureTensors.exists(_.getTensorType == SparseType)) {
-      TensorSample(featureTensors, labelTensors)
+      TableSample(featureTensors, labelTensors)
     } else {
       ArraySample(featureTensors, labelTensors)
     }
@@ -382,7 +383,7 @@ object Sample {
         featureTensor: Tensor[T])(implicit ev: TensorNumeric[T]) : Sample[T] = {
     require(featureTensor.isContiguous(), "featureTensor is not contiguous")
     if (featureTensor.getTensorType == SparseType) {
-      TensorSample(featureTensor)
+      TableSample(featureTensor)
     } else {
       ArraySample(featureTensor)
     }
@@ -391,39 +392,76 @@ object Sample {
   def apply[T: ClassTag](
         featureTensors: Array[Tensor[T]])(implicit ev: TensorNumeric[T]) : Sample[T] = {
     if (featureTensors.exists(_.getTensorType == SparseType)) {
-      TensorSample(featureTensors)
+      TableSample(featureTensors)
     } else {
       ArraySample(featureTensors)
     }
   }
+
+  def apply[T: ClassTag](
+      featureTensors: Table)(implicit ev: TensorNumeric[T]) : Sample[T] = {
+    new TableSample(featureTensors, T())
+  }
+
+  def apply[T: ClassTag](
+      featureTensors: Table,
+      labelTensors: Table)(implicit ev: TensorNumeric[T]) : Sample[T] = {
+    new TableSample[T](featureTensors, labelTensors)
+  }
 }
 
 /**
- * A kind of Sample who hold both DenseTensor and SparseTensor as features.
+ * A kind of Sample who holds different types of tensors as features.
  * @param features feature tensors
  * @param labels label tensors
  * @tparam T numeric type
  */
-private[bigdl] class TensorSample[T: ClassTag](
-      val features: Array[Tensor[T]],
-      val labels: Array[Tensor[T]]) extends Sample[T] {
-  val featureSize = features.map(_.size())
-  val labelSize = features.map(_.size())
+private[bigdl] class TableSample[T: ClassTag](
+                                               val features: Table,
+                                               val labels: Table) extends Sample[T] {
+
+  val hasSparseTensor: Boolean = {
+    var hasSparse = false
+    var i = 1
+    while (i <= features.length()) {
+      if (features[Tensor[_]](i).getTensorType == SparseType) hasSparse = true
+      i = i + 1
+    }
+
+    i = 1
+    while (i <= labels.length()) {
+      if (labels[Tensor[_]](i).getTensorType == SparseType) hasSparse = true
+      i = i + 1
+    }
+    hasSparse
+  }
+
+  private def getSize(features: Table): Array[Array[Int]] = {
+    val size = new Array[Array[Int]](features.length())
+    var i = 1
+    while (i <= features.length()) {
+      size(i - 1) = features[Tensor[_]](i).size()
+      i = i + 1
+    }
+    size
+  }
+  val featureSize = getSize(features)
+  val labelSize = getSize(labels)
 
   def featureLength(index: Int): Int = {
-    features(0).size(1)
+    featureSize(index)(0)
   }
 
   def labelLength(index: Int): Int = {
-    labels(0).size(1)
+    labelSize(index)(0)
   }
 
   def numFeature(): Int = {
-    features.length
+    features.length()
   }
 
   def numLabel(): Int = {
-    labels.length
+    labels.length()
   }
 
   def getFeatureSize(): Array[Array[Int]] = {
@@ -439,37 +477,37 @@ private[bigdl] class TensorSample[T: ClassTag](
   }
 }
 
-object TensorSample {
+object TableSample {
   def apply[T: ClassTag](
         featureTensors: Array[Tensor[T]])(implicit ev: TensorNumeric[T]) : Sample[T] = {
-    new TensorSample[T](featureTensors, Array())
+    new TableSample[T](T(featureTensors), T())
   }
 
   def apply[T: ClassTag](
         featureTensors: Tensor[T])(implicit ev: TensorNumeric[T]) : Sample[T] = {
-    new TensorSample[T](Array(featureTensors), Array())
+    new TableSample[T](T(featureTensors), T())
   }
   def apply[T: ClassTag](
         featureTensors: Array[Tensor[T]],
         labelTensors: Array[Tensor[T]])(implicit ev: TensorNumeric[T]) : Sample[T] = {
-    new TensorSample[T](featureTensors, labelTensors)
+    new TableSample[T](T.array(featureTensors), T.array(labelTensors))
   }
 
   def apply[T: ClassTag](
         featureTensors: Array[Tensor[T]],
         labelTensors: Tensor[T])(implicit ev: TensorNumeric[T]) : Sample[T] = {
-    new TensorSample[T](featureTensors, Array(labelTensors))
+    new TableSample[T](T.array(featureTensors), T(labelTensors))
   }
 
   def apply[T: ClassTag](
         featureTensors: Tensor[T],
         labelTensors: Tensor[T])(implicit ev: TensorNumeric[T]) : Sample[T] = {
-    new TensorSample[T](Array(featureTensors), Array(labelTensors))
+    new TableSample[T](T(featureTensors), T(labelTensors))
   }
 
   def apply[T: ClassTag](
         featureTensors: Tensor[T],
         label: T)(implicit ev: TensorNumeric[T]) : Sample[T] = {
-    new TensorSample[T](Array(featureTensors), Array(Tensor(1).fill(label)))
+    new TableSample[T](T(featureTensors), T(Tensor(1).fill(label)))
   }
 }
