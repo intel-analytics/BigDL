@@ -13,6 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
+import tempfile
 
 import torch
 from torch import nn
@@ -21,8 +22,9 @@ import multiprocessing as mp
 from typing import Dict, Callable, Tuple, Optional, List, Union, Sequence
 from torch.utils.data import DataLoader
 from torchmetrics.metric import Metric
-from bigdl.nano.utils.common import AccelerationOption, available_acceleration_combination,\
-    latency_calculate_helper, format_optimize_result, BaseInferenceOptimizer
+from bigdl.nano.utils.common import AccelerationOption, available_acceleration_combination, \
+    latency_calculate_helper, format_optimize_result, BaseInferenceOptimizer, AccelerationEnv, \
+    exec_with_worker
 from bigdl.nano.utils.common import invalidInputError
 from bigdl.nano.pytorch.amp import BF16Model
 from bigdl.nano.deps.openvino.openvino_api import PytorchOpenVINOModel
@@ -142,6 +144,18 @@ class InferenceOptimizer(BaseInferenceOptimizer):
     DEFAULT_INFERENCE_ACCELERATION_METHOD = {}
     for method in _default_methods:
         DEFAULT_INFERENCE_ACCELERATION_METHOD[method] = ALL_INFERENCE_ACCELERATION_METHOD[method]
+
+    ALL_ACCELERATION_ENV = {
+        'raw': AccelerationEnv(),
+        'openmp': AccelerationEnv(openmp=True),
+        'openmp_perf': AccelerationEnv(openmp=True, perf=True),
+        'tcmalloc': AccelerationEnv(tcmalloc=True),
+        'tcmalloc_openmp': AccelerationEnv(tcmalloc=True, openmp=True),
+        'tcmalloc_openmp_perf': AccelerationEnv(tcmalloc=True, openmp=True, perf=True),
+        'jemalloc': AccelerationEnv(jemalloc=True),
+        'jemalloc_openmp': AccelerationEnv(jemalloc=True, openmp=True),
+        'jemalloc_openmp_perf': AccelerationEnv(jemalloc=True, openmp=True, perf=True),
+    }
 
     def optimize(self, model: nn.Module,
                  training_data: Union[DataLoader, torch.Tensor, Tuple[torch.Tensor]],
@@ -407,6 +421,9 @@ class InferenceOptimizer(BaseInferenceOptimizer):
         model._nano_context_manager = generate_context_manager(accelerator=None,
                                                                precision="fp32",
                                                                thread_num=thread_num)
+        self._baseline_time = baseline_time
+        self._input_sample = input_sample
+        self._latency_sample_num = latency_sample_num
 
         print("==========================Start Optimization==========================")
         start_time = time.perf_counter()
@@ -434,17 +451,11 @@ class InferenceOptimizer(BaseInferenceOptimizer):
 
                 result_map[method]["status"] = "successful"
 
-                def func_test(model, input_sample):
-                    if isinstance(input_sample, (Dict, torch.Tensor)):
-                        model(input_sample)
-                    else:
-                        model(*input_sample)
-
                 with InferenceOptimizer.get_context(acce_model):
                     try:
-                        result_map[method]["latency"], status =\
+                        result_map[method]["latency"], status = \
                             latency_calculate_helper(latency_sample_num, baseline_time,
-                                                     func_test, acce_model, input_sample)
+                                                     self._func_test, acce_model, input_sample)
                         if status is False and method != "original":
                             result_map[method]["status"] = "early stopped"
                             # save model even early stop
@@ -472,7 +483,7 @@ class InferenceOptimizer(BaseInferenceOptimizer):
                             if method == "original":
                                 # test whether metric works
                                 try:
-                                    result_map[method]["accuracy"] =\
+                                    result_map[method]["accuracy"] = \
                                         _accuracy_calculate_helper(acce_model, metric,
                                                                    validation_data)
                                 except Exception:
@@ -491,7 +502,7 @@ class InferenceOptimizer(BaseInferenceOptimizer):
                                         "metric(model, data_loader) (or metric(model) if "
                                         "validation_data is None).")
                             else:
-                                result_map[method]["accuracy"] =\
+                                result_map[method]["accuracy"] = \
                                     _accuracy_calculate_helper(acce_model, metric,
                                                                validation_data)
                     else:
@@ -499,7 +510,7 @@ class InferenceOptimizer(BaseInferenceOptimizer):
 
                 result_map[method]["model"] = acce_model
                 print(f"----------Finish test {method} model "
-                      f"({idx+1}/{len(available_dict)})----------")
+                      f"({idx + 1}/{len(available_dict)})----------")
 
         self.optimized_model_dict: Dict = result_map
         print("\n\n==========================Optimization Results==========================")
@@ -1241,6 +1252,32 @@ class InferenceOptimizer(BaseInferenceOptimizer):
         os.environ["OMP_NUM_THREADS"] = OMP_NUM_THREADS
 
         return _MultiInstanceModel(model, ps, send_queue, recv_queue, next_idx)
+
+    @staticmethod
+    def _func_test(model, input_sample):
+        if isinstance(input_sample, (Dict, torch.Tensor)):
+            model(input_sample)
+        else:
+            model(*input_sample)
+
+    def _latency_calc_with_worker(self, model, env: Optional[dict] = None):
+        def _latency_calculate_helper(iterrun, baseline_time, func,
+                                      model_path, original_model, *args):
+            try:
+                model = InferenceOptimizer.load(model_path, original_model)
+            except Exception:
+                model = InferenceOptimizer.load(model_path)
+            with InferenceOptimizer.get_context(model):
+                return latency_calculate_helper(iterrun, baseline_time, func, model, *args)
+
+        with tempfile.TemporaryDirectory() as tmp_dir_path:
+            model_path = os.path.join(tmp_dir_path, 'model')
+            InferenceOptimizer.save(model, model_path)
+            latency, _ = exec_with_worker(_latency_calculate_helper, self._latency_sample_num,
+                                          self._baseline_time, self._func_test, model_path,
+                                          self.optimized_model_dict['original']['model'],
+                                          self._input_sample, env=env)
+        return latency
 
 
 def _signature_check(function):

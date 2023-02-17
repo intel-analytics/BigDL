@@ -198,6 +198,6 @@ def patch_attrs_from_model_to_object(model: nn.Module, instance):
     :param instance: a instance of any object
     """
     for attr in dir(model):
-        if attr not in dir(instance) and not attr.startswith('_') and not\
+        if attr not in dir(instance) and not attr.startswith('_') and not \
                 isinstance(getattr(model, attr), torch.nn.Module):
             setattr(instance, attr, getattr(model, attr))

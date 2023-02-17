@@ -14,18 +14,23 @@
 # limitations under the License.
 #
 
+import os
+import sys
 
-from .latency import latency_calculate_helper
+import cloudpickle
 
-from .acceleration_option import AccelerationOption
-from .acceleration_option import available_acceleration_combination
+RETURN_FILENAME = 'return_value'
 
-from .format import format_acceleration_option
-from .format import format_optimize_result
 
-from .metric import CompareMetric
+def main():
+    param_file = sys.argv[1]
+    with open(param_file, "rb") as f:
+        params = cloudpickle.load(f)
+    tmp_dir = os.path.dirname(param_file)
+    return_value = params[0](*(params[1:]))
+    with open(os.path.join(tmp_dir, RETURN_FILENAME), 'wb') as f:
+        cloudpickle.dump(return_value, f)
 
-from .optimizer import BaseInferenceOptimizer
 
-from .acceleration_env import AccelerationEnv
-from .exec_with_worker import exec_with_worker
+if __name__ == "__main__":
+    main()

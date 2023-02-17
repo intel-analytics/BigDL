@@ -14,7 +14,6 @@
 # limitations under the License.
 #
 
-
 import numbers
 from typing import Dict
 
