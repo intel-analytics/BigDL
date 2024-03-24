@@ -66,8 +66,18 @@ if __name__ == '__main__':
             print(response)
         else:
             # Stream chat
+            print('-' * 20, 'Stream chatting with the model', '-' * 20)
             response_ = ""
-            print('-'*20, 'Stream Chat Output', '-'*20)
-            for response, history in model.stream_chat(tokenizer, args.question, history=[]):
-                print(response.replace(response_, ""), end="")
-                response_ = response
+            chat_history = []
+            while True:
+                user_input = input("Input: ")
+                if user_input != "stop":
+                    print("Response: ", end="")
+                    for response, history in model.stream_chat(tokenizer, user_input, history=chat_history):
+                        print(response.replace(response_, ""), end="")
+                        response_ = response
+                    chat_history = history
+                    print("\n")
+                else:
+                    print("Stream chat stopped.")
+                    break
